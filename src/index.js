@@ -2,26 +2,22 @@ import "babel-polyfill";
 import Promise from "es6-promise";
 const pull = require("pull-stream");
 const Pushable = require("pull-pushable");
-const {tap} = require("pull-tap");
-let sendStream = Pushable();
+const { tap } = require("pull-tap");
 const wsSource = require("pull-ws/source");
 const wsSink = require("pull-ws");
 
-const pullPromise = require("pull-promise");
 const stringify = require("pull-stringify");
 let transactionQueue = {};
 let pc;
-const createNode = require("./create-node");
 const chance = require("chance").Chance();
 
 const domReady = new Promise((resolve, reject) => {
   console.log("DOM ready");
-  
 
   resolve();
 });
 
-const _createSession = (janusStream) => {
+const _createSession = janusStream => {
   let tId = chance.guid();
   let request = {
     janus: "create",
@@ -46,7 +42,7 @@ const _createSession = (janusStream) => {
   });
 };
 
-const _attach = (janusStream, sessionId)=> {
+const _attach = (janusStream, sessionId) => {
   let tId = chance.guid();
   let request = {
     janus: "attach",
@@ -71,7 +67,7 @@ const _attach = (janusStream, sessionId)=> {
       }
     };
   });
-}
+};
 
 const _startKeepAlive = (janusStream, sessionId, handleId) => {
   let timerId = setInterval(() => {
@@ -85,15 +81,15 @@ const _startKeepAlive = (janusStream, sessionId, handleId) => {
   }, 30000);
 
   return timerId;
-}
-const createRoom = (janusStream, sessionId,handleId) => {
+};
+const createRoom = (janusStream, sessionId, handleId) => {
   let tId = chance.guid();
   let request = {
     janus: "message",
     session_id: sessionId,
     handle_id: handleId,
     transaction: tId,
-    body : {
+    body: {
       request: "create",
       description: "remon",
       //   transaction: tId,
@@ -109,7 +105,6 @@ const createRoom = (janusStream, sessionId,handleId) => {
       playoutdelay_ext: false,
       videoorient_ext: false
     }
-
   };
 
   janusStream.push(request);
@@ -118,7 +113,6 @@ const createRoom = (janusStream, sessionId,handleId) => {
     transactionQueue[tId] = {
       id: tId,
       success: response => {
-        
         resolve(response.plugindata.data.room);
         return true;
       },
@@ -128,10 +122,10 @@ const createRoom = (janusStream, sessionId,handleId) => {
       }
     };
   });
-}
+};
 
 const _join = (sendJanusStream, broadcastObj) => {
-  console.log("_join", broadcastObj)
+  console.log("_join", broadcastObj);
   if (broadcastObj.type === "subscriber" && !broadcastObj)
     console.error("No broadCast info");
   let tId = chance.guid();
@@ -160,11 +154,10 @@ const _join = (sendJanusStream, broadcastObj) => {
     transactionQueue[tId] = {
       id: tId,
       ack: response => {
-        console.log("Join ack")
-        
+        console.log("Join ack");
       },
       event: response => {
-        console.log("Join evnt")
+        console.log("Join evnt");
         if ("error_code" in response.plugindata.data) {
           reject(
             "cmd:join " +
@@ -175,7 +168,7 @@ const _join = (sendJanusStream, broadcastObj) => {
               response.plugindata.data.error
           );
         } else {
-          console.log("Join event", response)
+          console.log("Join event", response);
           resolve(response);
           /*if ("jsep" in response) {
             resolve(response);
@@ -190,7 +183,7 @@ const _join = (sendJanusStream, broadcastObj) => {
       }
     };
   });
-}
+};
 ///broadCastObj : sessionId, handleId, sdpType, sdp
 const _configure = (sendJanusStream, broadcastObj) => {
   let tId = chance.guid();
@@ -206,7 +199,7 @@ const _configure = (sendJanusStream, broadcastObj) => {
       video: true,
       audio: true
     },
-    jsep : broadcastObj.jsep
+    jsep: broadcastObj.jsep
   };
 
   sendJanusStream.push(request);
@@ -241,7 +234,7 @@ const _configure = (sendJanusStream, broadcastObj) => {
       }
     };
   });
-}
+};
 const addIceCandidate = (sendJanusStream, candidates, boadcastObj) => {
   const { sdpMid, sdpMLineIndex, candidate } = candidates;
   let tId = chance.guid();
@@ -267,284 +260,207 @@ const addIceCandidate = (sendJanusStream, candidates, boadcastObj) => {
       }
     };
   });
-}
-const setting1 = (ws) => new Promise((resolve, reject)=>{
-  let sendJanusStream = Pushable();
-  let sessionId;
-  let handleId;
-  let keepaliveTimerId;
-  let roomId;
-  ws.onerror = console.error;
-  ws.onclose = () => {
-    console.log("CONNECTION CLOSED!");
-    clearInterval(keepaliveTimerId)
-  };
-
-  ws.onopen = async () => {
-    //setSendStream
-    pull(
-      sendJanusStream,
-      stringify(),
-      tap(o => console.log("[SENT]", o)),
-      wsSink(ws)
-    );
-    //setReceiveStream
-    pull(
-      wsSource(ws),
-      pull.map(o => JSON.parse(o)),
-      tap(o => {
-        if (o.janus !== "ack") console.log("[RECV] ", o);
-      }),
-      pull.drain(o =>{ 
-        console.log(o)
-        console.log(o.transaction);
-        console.log(transactionQueue[o.transaction] );
-        o && transactionQueue[o.transaction] && transactionQueue[o.transaction][o.janus](o)
-      })
-    );
-    //init ws
-      sessionId = await _createSession(sendJanusStream);
-      handleId  = await _attach(sendJanusStream, sessionId);
-      keepaliveTimerId = _startKeepAlive(sendJanusStream, sessionId, handleId);
-      roomId = await createRoom(sendJanusStream, sessionId, handleId);
-      let joinedInfo = await _join(sendJanusStream, {
-        sessionId,
-        handleId,
-        roomId,
-        type : "publisher"
-      });
-      window.roomInfo = {
-        roomId,
-        publisherId : joinedInfo.plugindata.data.id
-      }
-      
-
-
-      pc = new RTCPeerConnection(null);
-  
-      // send any ice candidates to the other peer
-      pc.onicecandidate = event => {
-        console.log("[ICE]", event);
-        if (event.candidate) {
-          addIceCandidate(
-            sendJanusStream,
-            event.candidate,
-            {
-              sessionId,
-              handleId
-            }
-          )
-          // sendStream.push({
-          //   request: "sendTrickleCandidate",
-          //   candidate: event.candidate
-          // });
-        }
-      };
-      pc.oniceconnectionstatechange = function(e) {
-        console.log("[ICE STATUS] ", pc.iceConnectionState);
-      };
-  
-      // let the "negotiationneeded" event trigger offer generation
-      pc.onnegotiationneeded = async () => {};
-  
-      try {
-        // get a local stream, show it in a self-view and add it to be sent
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: true
-        });
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
-        document.getElementById("studio").srcObject = stream;
-        try {
-          let sdp = await pc.createOffer();
-          await pc.setLocalDescription(sdp);
-          console.log("localDescription", pc.localDescription);
-          let answerSDP = await _configure(sendJanusStream, {
-            sessionId,
-            handleId,
-            roomId,
-            jsep : sdp
-          })
-          await pc.setRemoteDescription(answerSDP.jsep);
-          console.log("answerSDP")
-          console.log(answerSDP)
-        } catch (err) {
-          console.error(err);
-        }
-        resolve();
-      } catch (err) {
-        console.error(err);
-      }
-    
-    document.getElementById("btnReady").addEventListener("click", async e => {
-      
-    });
-  };
-
-  
-});
-const setting2 = (ws) => {
-  let sendJanusStream = Pushable();
-  let sessionId;
-  let handleId;
-  let keepaliveTimerId;
-  let roomId;
-  ws.onerror = console.error;
-  ws.onclose = () => {
-    console.log("CONNECTION CLOSED!");
-    clearInterval(keepaliveTimerId)
-  };
-
-  ws.onopen = async () => {
-    //setSendStream
-    pull(
-      sendJanusStream,
-      stringify(),
-      tap(o => console.log("[SENT]", o)),
-      wsSink(ws)
-    );
-    //setReceiveStream
-    pull(
-      wsSource(ws),
-      pull.map(o => JSON.parse(o)),
-      tap(o => {
-        if (o.janus !== "ack") console.log("[RECV] ", o);
-      }),
-      pull.drain(o =>{ 
-        console.log(o)
-        console.log(o.transaction);
-        console.log(transactionQueue[o.transaction] );
-        o && transactionQueue[o.transaction] && transactionQueue[o.transaction][o.janus](o)
-      })
-    );
-    //init ws
-      sessionId = await _createSession(sendJanusStream);
-      handleId  = await _attach(sendJanusStream, sessionId);
-      keepaliveTimerId = _startKeepAlive(sendJanusStream, sessionId, handleId);
-      let result = await _join(sendJanusStream, {
-        sessionId,
-        handleId,
-        roomId : window.roomInfo.roomId,
-        broadcastId : window.roomInfo.publisherId,
-        type : "subscriber"
-      });
-      console.log("subscriver")
-      console.log(result)
-    /*document.getElementById("btnReady").addEventListener("click", async e => {
-      let joinedMsg = await _join(sendJanusStream, {
-        sessionId,
-        handleId,
-        roomId,
-        broadcastId : window.roomInfo.id,
-        type : "subscriber"
-      });
-      pc = new RTCPeerConnection(null);
-  
-      // send any ice candidates to the other peer
-      pc.onicecandidate = event => {
-        console.log("[ICE]", event);
-        if (event.candidate) {
-          addIceCandidate(
-            sendJanusStream,
-            event.candidate,
-            {
-              sessionId,
-              handleId
-            }
-          )
-          // sendStream.push({
-          //   request: "sendTrickleCandidate",
-          //   candidate: event.candidate
-          // });
-        }
-      };
-      pc.oniceconnectionstatechange = function(e) {
-        console.log("[ICE STATUS] ", pc.iceConnectionState);
-      };
-  
-      // let the "negotiationneeded" event trigger offer generation
-      pc.onnegotiationneeded = async () => {};
-  
-      try {
-        // get a local stream, show it in a self-view and add it to be sent
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: true
-        });
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
-        document.getElementById("studio").srcObject = stream;
-        try {
-          let sdp = await pc.createOffer();
-          await pc.setLocalDescription(sdp);
-          console.log("localDescription", pc.localDescription);
-          let answerSDP = await _configure(sendJanusStream, {
-            sessionId,
-            handleId,
-            roomId,
-            jsep : sdp
-          })
-          await pc.setRemoteDescription(answerSDP.jsep);
-          console.log("answerSDP")
-          console.log(answerSDP)
-        } catch (err) {
-          console.error(err);
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    
-    });*/
-  };
-
-
 };
+const _start = (sendJanusStream, broadCastObj) => {
+  let tId = chance.guid();
+  let request = {
+    janus: "message",
+    session_id: broadCastObj.sessionId,
+    handle_id: broadCastObj.handleId,
+    transaction: tId,
+    body: {
+      request: "start",
+      room: broadCastObj.roomId
+    },
+    jsep: broadCastObj.jsep
+  };
+
+  sendJanusStream.push(request);
+};
+
 const initApp = async () => {
   console.log("init app");
-  domReady.then(async ()=>{
-    document.getElementById("btnReady").classList.remove("connecting");
-    document.getElementById("btnReady").classList.remove("button-outline");
-    window.jw1 = new WebSocket("ws://127.0.0.1:8188", "janus-protocol");
-    
-    await setting1( window.jw1);
-    
-    window.jw2 = new WebSocket("ws://127.0.0.1:8189", "janus-protocol");
-    setting2( window.jw2);
-
-    
-  }).catch(console.error);
-
-  //domReady.then(createNode).then(node => {
-    
-
-    /*node.handle("/streamer", (protocol, conn) => {
+  domReady
+    .then(async () => {
       document.getElementById("btnReady").classList.remove("connecting");
       document.getElementById("btnReady").classList.remove("button-outline");
-      console.log("dialed!!");
-      pull(sendStream, pull.map(o => JSON.stringify(o)), conn);
-      pull(
-        conn,
-        pull.map(o => window.JSON.parse(o.toString())),
-        pull.drain(o => {
-          const controllerResponse = {
-            answer: async desc => {
-              console.log("controller answered", desc);
-              await pc.setRemoteDescription(desc);
-            }
-          };
-          controllerResponse[o.type] && controllerResponse[o.type](o);
-        })
+
+      let jw1 = new WebSocket("ws://127.0.0.1:8188", "janus-protocol");
+      let sendJanus1Stream = Pushable();
+      let jw1Obj = {};
+      await new Promise((resolve, reject) => {
+        jw1.onerror = console.error;
+        jw1.onclose = () => {
+          console.log("CONNECTION CLOSED!");
+          clearInterval(jw1Obj.keepaliveTimerId);
+        };
+
+        jw1.onopen = async () => {
+          //setSendStream
+          pull(
+            sendJanus1Stream,
+            stringify(),
+            tap(o => console.log("[SENT]", o)),
+            wsSink(jw1)
+          );
+          //setReceiveStream
+          pull(
+            wsSource(jw1),
+            pull.map(o => JSON.parse(o)),
+            tap(o => {
+              if (o.janus !== "ack") console.log("[RECV] ", o);
+            }),
+            pull.drain(o => {
+              o &&
+                transactionQueue[o.transaction] &&
+                transactionQueue[o.transaction][o.janus](o);
+            })
+          );
+          resolve();
+        };
+      });
+
+      //init ws
+      jw1Obj.sessionId = await _createSession(sendJanus1Stream);
+      jw1Obj.handleId = await _attach(sendJanus1Stream, jw1Obj.sessionId);
+      jw1Obj.keepaliveTimerId = _startKeepAlive(
+        sendJanus1Stream,
+        jw1Obj.sessionId,
+        jw1Obj.handleId
       );
-    });
-    node.on("peer:connect", peerInfo => {
-      console.log("connected", peerInfo.id.toB58String());
-    });
-    node.start(err => {
-      if (err) {
+      jw1Obj.roomId = await createRoom(
+        sendJanus1Stream,
+        jw1Obj.sessionId,
+        jw1Obj.handleId
+      );
+      jw1Obj.type = "publisher";
+      let joinedInfo = await _join(sendJanus1Stream, jw1Obj);
+      jw1Obj.broadcastId = joinedInfo.plugindata.data.id;
+      pc = new RTCPeerConnection(null);
+      // send any ice candidates to the other peer
+      pc.onicecandidate = event => {
+        console.log("[ICE]", event);
+        if (event.candidate) {
+          addIceCandidate(sendJanus1Stream, event.candidate, jw1Obj);
+        }
+      };
+      pc.oniceconnectionstatechange = function(e) {
+        console.log("[ICE STATUS] ", pc.iceConnectionState);
+      };
+
+      // let the "negotiationneeded" event trigger offer generation
+      pc.onnegotiationneeded = async () => {};
+
+      try {
+        // get a local stream, show it in a self-view and add it to be sent
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: true
+        });
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+        document.getElementById("studio").srcObject = stream;
+        try {
+          let sdp = await pc.createOffer();
+          await pc.setLocalDescription(sdp);
+          console.log("localDescription", pc.localDescription);
+          jw1Obj.jsep = sdp;
+          let answerSDP = await _configure(sendJanus1Stream, jw1Obj);
+          await pc.setRemoteDescription(answerSDP.jsep);
+          console.log(answerSDP);
+        } catch (err) {
+          console.error(err);
+        }
+      } catch (err) {
         console.error(err);
-        return;
       }
-      console.log(node.peerInfo.multiaddrs.toArray().map(o => o.toString()));
-    });
-  });*/
+
+      //init janusWebsocket2
+      let jw2 = new WebSocket("ws://127.0.0.1:8189", "janus-protocol");
+      let sendJanus2Stream = Pushable();
+      let jw2Obj = {};
+      await new Promise((resolve, reject) => {
+        jw2.onerror = console.error;
+        jw2.onclose = () => {
+          console.log("CONNECTION CLOSED!");
+          clearInterval(jw2Obj.keepaliveTimerId);
+        };
+
+        jw2.onopen = async () => {
+          //setSendStream
+          pull(
+            sendJanus2Stream,
+            stringify(),
+            tap(o => console.log("[SENT]", o)),
+            wsSink(jw2)
+          );
+          //setReceiveStream
+          pull(
+            wsSource(jw2),
+            pull.map(o => JSON.parse(o)),
+            tap(o => {
+              if (o.janus !== "ack") console.log("[RECV] ", o);
+            }),
+            pull.drain(o => {
+              o &&
+                transactionQueue[o.transaction] &&
+                transactionQueue[o.transaction][o.janus](o);
+            })
+          );
+          resolve();
+        };
+      });
+      //init ws
+      jw2Obj.sessionId = await _createSession(sendJanus2Stream);
+      jw2Obj.handleId = await _attach(sendJanus2Stream, jw2Obj.sessionId);
+      jw2Obj.keepaliveTimerId = _startKeepAlive(
+        sendJanus2Stream,
+        jw2Obj.sessionId,
+        jw2Obj.handleId
+      );
+      jw2Obj.roomId = await createRoom(
+        sendJanus2Stream,
+        jw2Obj.sessionId,
+        jw2Obj.handleId
+      );
+      jw2Obj.type = "publisher";
+      let joinedInfo2 = await _join(sendJanus2Stream, jw2Obj);
+      jw2Obj.broadcastId = joinedInfo2.plugindata.data.id;
+
+      //get offerSDP from jw1
+      let jw1Obj2 = {};
+      jw1Obj2.handleId = await _attach(sendJanus1Stream, jw1Obj.sessionId);
+      jw1Obj2.keepaliveTimerId = _startKeepAlive(
+        sendJanus1Stream,
+        jw1Obj.sessionId,
+        jw1Obj2.handleId
+      );
+
+      let subscriberJoined = await _join(sendJanus1Stream, {
+        sessionId: jw1Obj.sessionId,
+        handleId: jw1Obj2.handleId,
+        roomId: jw1Obj.roomId,
+        broadcastId: jw1Obj.broadcastId,
+        type: "subscriber"
+      });
+
+      let offerSDPtoJw2 = subscriberJoined.jsep;
+
+      let jw2Configured = await _configure(sendJanus2Stream, {
+        sessionId: jw2Obj.sessionId,
+        handleId: jw2Obj.handleId,
+        roomId: jw2Obj.roomId,
+        jsep: offerSDPtoJw2
+      });
+      console.log("getSubscriber");
+      console.log(answerSDPtoJw1);
+      let answerSDPtoJw1 = jw2Configured.jsep;
+      _start(sendJanus1Stream, {
+        sessionId: jw1Obj.sessionId,
+        handleId: jw1Obj2.handleId,
+        roomId: jw1Obj.roomId,
+        jsep: answerSDPtoJw1
+      });
+    })
+    .catch(console.error);
 };
 initApp();
