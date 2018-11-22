@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Streamer</title>
+  <link rel="stylesheet" href="//fonts.googleapis.com/css?family=Roboto:300,300italic,700,700italic">
+  <link rel="stylesheet" href="//cdn.rawgit.com/necolas/normalize.css/master/normalize.css">
+  <link rel="stylesheet" href="//cdn.rawgit.com/milligram/milligram/master/dist/milligram.min.css">
+  <link rel="stylesheet" href="./styles/common.css">
+</head>
+
+<body>
+<div class="container">
+  <h1>Streamer</h1>
+  <div class="row">
+    <div class="column">
+      <h3>
+        Streaming status
+      </h3>
+    </div>
+  </div>
+  <div class="row">
+    <div class="column">
+      <video id="studio" autoplay></video>
+    </div>
+  </div>
+  <div class="row">
+    <div class="column">
+      <a id="btnReady" class="button button-outline connecting" href="#"></a>
+    </div>
+  </div>
+  <div class="row">
+    <div class="column">
+      <h3>
+        Current viewer counts:
+        <span id="viewerCounts">0</span>
+      </h3>
+    </div>
+  </div>
+</div>
+<script src="../src/index.js"></script>
+</body>
+</html>

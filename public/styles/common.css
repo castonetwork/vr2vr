@@ -1,0 +1,10 @@
+#btnReady::after {
+  content: "ready"
+}
+.connecting::after {
+  content: "connecting..." !important;
+}
+
+.connected::after {
+  content: "connected" !important;
+}
