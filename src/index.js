@@ -1,5 +1,4 @@
 import "babel-polyfill";
-import Promise from "es6-promise";
 const pull = require("pull-stream");
 const Pushable = require("pull-pushable");
 const { tap } = require("pull-tap");
@@ -8,7 +7,7 @@ const wsSink = require("pull-ws");
 
 const stringify = require("pull-stringify");
 let transactionQueue = {};
-let pc;
+let pc, pc1;
 const chance = require("chance").Chance();
 
 const domReady = new Promise((resolve, reject) => {
@@ -93,7 +92,7 @@ const createRoom = (janusStream, sessionId, handleId) => {
       request: "create",
       description: "remon",
       //   transaction: tId,
-      bitrate: 102400,
+      bitrate: 1024000,
       publishers: 1,
       fir_freq: 1,
       is_private: false,
@@ -276,6 +275,33 @@ const _start = (sendJanusStream, broadCastObj) => {
   };
 
   sendJanusStream.push(request);
+  return new Promise((resolve, reject)=>{
+    transactionQueue[tId] = {
+      id: tId,
+      ack: response => {
+        return false;
+      },
+      event: response => {
+        if ("error_code" in response.plugindata.data) {
+          reject(
+            response.plugindata.data.error_code +
+              ":" +
+              response.plugindata.data.error
+          );
+        } else {
+          console.log("Success Start!");
+          console.log(response);
+          resolve();
+        }
+        return true;
+      },
+      failure: response => {
+        console.error(response);
+        reject();
+        return true;
+      }
+    };
+  })
 };
 
 const initApp = async () => {
@@ -375,7 +401,7 @@ const initApp = async () => {
       }
 
       //init janusWebsocket2
-      let jw2 = new WebSocket("ws://127.0.0.1:8189", "janus-protocol");
+      let jw2 = new WebSocket("ws://13.209.96.83:8188", "janus-protocol");
       let sendJanus2Stream = Pushable();
       let jw2Obj = {};
       await new Promise((resolve, reject) => {
@@ -444,6 +470,7 @@ const initApp = async () => {
       });
 
       let offerSDPtoJw2 = subscriberJoined.jsep;
+      offerSDPtoJw2.trickle = false;
 
       let jw2Configured = await _configure(sendJanus2Stream, {
         sessionId: jw2Obj.sessionId,
@@ -453,13 +480,75 @@ const initApp = async () => {
       });
       console.log("getSubscriber");
       console.log(answerSDPtoJw1);
+      // why trickle?
       let answerSDPtoJw1 = jw2Configured.jsep;
+      answerSDPtoJw1.trickle = false;
       _start(sendJanus1Stream, {
         sessionId: jw1Obj.sessionId,
         handleId: jw1Obj2.handleId,
         roomId: jw1Obj.roomId,
         jsep: answerSDPtoJw1
       });
+
+      let jw2Obj2 = {};
+      pc1 = new RTCPeerConnection(null);
+
+      pc1.onicecandidate = event => {
+        console.log("[ICE]", event);
+        if (event.candidate) {
+          addIceCandidate(sendJanus2Stream, event.candidate, {
+            sessionId : jw2Obj.sessionId,
+            handleId : jw2Obj2.handleId
+          });
+        }
+      };
+
+      pc1.oniceconnectionstatechange = function(e) {
+        console.log("[ICE STATUS222] ", pc1.iceConnectionState);
+      };
+      // let the "negotiationneeded" event trigger offer generation
+      pc1.ontrack = async event => {
+        console.log("[ON Strack2222]", event);
+        console.log(event);
+        //event.streams.forEach(track => pc1.addTrack(track, stream));
+        document.getElementById("viewer").srcObject = event.streams[0];
+      };
+
+      try {
+        
+        jw2Obj2.handleId = await _attach(sendJanus2Stream, jw2Obj.sessionId);
+        jw2Obj2.keepaliveTimerId = _startKeepAlive(
+          sendJanus2Stream,
+          jw2Obj.sessionId,
+          jw2Obj2.handleId
+        );
+        let jw2OfferSDP = await _join(sendJanus2Stream, {
+          sessionId: jw2Obj.sessionId,
+          handleId: jw2Obj2.handleId,
+          roomId: jw2Obj.roomId,
+          broadcastId: jw2Obj.broadcastId,
+          type: "subscriber"
+        })
+        await pc1.setRemoteDescription(jw2OfferSDP.jsep);
+        let  answerSDPtoJw2 = await pc1.createAnswer();
+        await pc1.setLocalDescription(answerSDPtoJw2);
+        _start(sendJanus2Stream, {
+          sessionId: jw2Obj.sessionId,
+          handleId: jw2Obj2.handleId,
+          roomId: jw2Obj.roomId,
+          jsep: answerSDPtoJw2
+        });
+        /*sendController.push({
+          request: "sendCreateAnswer",
+          jsep: pc1.localDescription
+        });*/
+        console.log("localDescription", pc1.localDescription);
+      } catch (err) {
+        console.error(err);
+      }
+
+
+
     })
     .catch(console.error);
 };
