@@ -13,6 +13,7 @@
     "babel-polyfill": "^6.26.0",
     "chance": "^1.0.16",
     "fastclick": "^1.0.6",
+    "pull-notify": "^0.1.1",
     "pull-promise": "^2.0.0",
     "pull-pushable": "^2.2.0",
     "pull-stringify": "^2.0.0",
