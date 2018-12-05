@@ -30,8 +30,6 @@ const getSendSocketStream = (_sendStream, _notify) => {
 };
 
 ///broadcastObj : sessionId, handleId, sdpType, sdp
-//const _join =
-
 module.exports = websocket => {
   const sendStream = Pushable();
   const notify = Notify();
@@ -147,10 +145,7 @@ module.exports = websocket => {
           handle_id: handleId
         },
         {
-          ack: res => {},
-          success: console.log,
-          event: console.log,
-          failure: console.log
+          ack: res => {}
         }
       );
     },

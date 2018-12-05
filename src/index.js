@@ -7,16 +7,18 @@ const domReady = new Promise((resolve, reject) => {
 });
 
 const makeJanusServer = async ws => {
+  let intervalIdsOnWs = [];
   let janusServer = await new Promise((resolve, reject) => {
     ws.onerror = console.error;
     ws.onclose = () => {
       console.log("CONNECTION CLOSED!");
-      clearInterval(publisher.keepaliveTimerId);
+      intervalIdsOnWs.map(clearInterval);
     };
 
-    ws.onopen = async () => {
+    ws.onopen = () => {
       //setSendStream
       let janusServer = JanusServer(ws);
+      janusServer.intervalIdsOnWs = intervalIdsOnWs;
       console.log("success setting websocket");
       resolve(janusServer);
     };
@@ -24,55 +26,62 @@ const makeJanusServer = async ws => {
   return janusServer;
 };
 
-const makePublisher = async janusServer => {
+const getNodeInput = async janusServer => {
   //init ws
-  let publisher = {};
-  publisher.sessionId = await janusServer._createSession();
-  publisher.handleId = await janusServer._attach(publisher.sessionId);
-  publisher.keepaliveTimerId = setInterval(x => {
-    janusServer._startKeepAlive(publisher.sessionId, publisher.handleId);
-  }, 30000);
-  console.log("keepalive");
-  console.log(publisher.keepaliveTimerId);
-  publisher.roomId = await janusServer.createRoom(
-    publisher.sessionId,
-    publisher.handleId
+  let nodeInput = {};
+  nodeInput.sessionId = await janusServer._createSession();
+  nodeInput.handleId = await janusServer._attach(nodeInput.sessionId);
+  janusServer.intervalIdsOnWs.push(
+    setInterval(x => {
+      janusServer._startKeepAlive(nodeInput.sessionId, nodeInput.handleId);
+    }, 30000)
   );
-  publisher.type = "publisher";
-  let joinedInfo = await janusServer._join(publisher);
-  console.log(joinedInfo);
-  publisher.broadcastId = joinedInfo.plugindata.data.id;
-  return { ...publisher, janusServer };
+
+  nodeInput.roomId = await janusServer.createRoom(
+    nodeInput.sessionId,
+    nodeInput.handleId
+  );
+  nodeInput.type = "publisher";
+  let joinedInfo = await janusServer._join(nodeInput);
+  nodeInput.broadcastId = joinedInfo.plugindata.data.id;
+  return { ...nodeInput, janusServer };
 };
 
-const makeViewer = async publisher => {
-  let viewer = {};
-  viewer.sessionId = publisher.sessionId;
-  viewer.handleId = await publisher.janusServer._attach(publisher.sessionId);
-  viewer.keepaliveTimerId = setInterval(x => {
-    publisher.janusServer._startKeepAlive(viewer.sessionId, viewer.handleId);
-  }, 30000);
+const getNodeOutput = async nodeInput => {
+  let nodeOutput = {};
+  nodeOutput.sessionId = nodeInput.sessionId;
+  nodeOutput.handleId = await nodeInput.janusServer._attach(
+    nodeInput.sessionId
+  );
+  nodeInput.janusServer.intervalIdsOnWs.push(
+    setInterval(x => {
+      nodeInput.janusServer._startKeepAlive(
+        nodeOutput.sessionId,
+        nodeOutput.handleId
+      );
+    }, 30000)
+  );
 
-  return { ...viewer, janusServer: publisher.janusServer };
+  return { ...nodeOutput, janusServer: nodeInput.janusServer };
 };
 
 //const getPcForPublish
-const startPublishStream = async publisher => {
-  let janusServer = publisher.janusServer;
-  publisher.pc = new RTCPeerConnection(null);
+const inputStreamToMs = async nodeInput => {
+  let janusServer = nodeInput.janusServer;
+  let pc = new RTCPeerConnection(null);
   // send any ice candidates to the other peer
-  publisher.pc.onicecandidate = event => {
+  pc.onicecandidate = event => {
     console.log("[ICE]", event);
     if (event.candidate) {
-      janusServer.addIceCandidate(event.candidate, publisher);
+      janusServer.addIceCandidate(event.candidate, nodeInput);
     }
   };
-  publisher.pc.oniceconnectionstatechange = function(e) {
-    console.log("[ICE STATUS] ", publisher.pc.iceConnectionState);
+  pc.oniceconnectionstatechange = function(e) {
+    console.log("[ICE STATUS] ", pc.iceConnectionState);
   };
 
   // let the "negotiationneeded" event trigger offer generation
-  publisher.pc.onnegotiationneeded = async () => {};
+  pc.onnegotiationneeded = async () => {};
 
   try {
     // get a local stream, show it in a self-view and add it to be sent
@@ -80,58 +89,56 @@ const startPublishStream = async publisher => {
       audio: true,
       video: true
     });
-    stream.getTracks().forEach(track => publisher.pc.addTrack(track, stream));
-    let sdp = await publisher.pc.createOffer();
-    await publisher.pc.setLocalDescription(sdp);
-    publisher.jsep = sdp;
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    let sdp = await pc.createOffer();
+    await pc.setLocalDescription(sdp);
+    nodeInput.jsep = sdp;
 
-    let answerSDP = await janusServer._configure(publisher);
-    await publisher.pc.setRemoteDescription(answerSDP.jsep);
+    let answerSDP = await janusServer._configure(nodeInput);
+    await pc.setRemoteDescription(answerSDP.jsep);
 
     document.getElementById("studio").srcObject = stream;
   } catch (err) {
     console.error(err);
   }
 };
-const relayPublisher = async (originPublisher, relayPublisher) => {
-  let viewer = await makeViewer(originPublisher);
+const relayNode = async (originNodeInput, relayNodeInput) => {
+  let originNodeOutput = await getNodeOutput(originNodeInput);
 
-  let originOfferSDP = await viewer.janusServer._join({
-    sessionId: viewer.sessionId,
-    handleId: viewer.handleId,
-    roomId: originPublisher.roomId,
-    broadcastId: originPublisher.broadcastId,
+  let originOfferSDP = await originNodeOutput.janusServer._join({
+    sessionId: originNodeOutput.sessionId,
+    handleId: originNodeOutput.handleId,
+    roomId: originNodeInput.roomId,
+    broadcastId: originNodeInput.broadcastId,
     type: "subscriber"
   });
   originOfferSDP.jsep.trickle = false;
-  let releyAnswerSDP = await relayPublisher.janusServer._configure({
-    sessionId: relayPublisher.sessionId,
-    handleId: relayPublisher.handleId,
-    roomId: relayPublisher.roomId,
+  let releyAnswerSDP = await relayNodeInput.janusServer._configure({
+    sessionId: relayNodeInput.sessionId,
+    handleId: relayNodeInput.handleId,
+    roomId: relayNodeInput.roomId,
     jsep: originOfferSDP.jsep
   });
-  console.log("releyAnswerSDP");
-  console.log(releyAnswerSDP);
   releyAnswerSDP.jsep.trickle = false;
-  await viewer.janusServer._start({
-    sessionId: viewer.sessionId,
-    handleId: viewer.handleId,
-    roomId: originPublisher.roomId,
+  await originNodeOutput.janusServer._start({
+    sessionId: originNodeOutput.sessionId,
+    handleId: originNodeOutput.handleId,
+    roomId: originNodeInput.roomId,
     jsep: releyAnswerSDP.jsep
   });
 };
 
-const startViewStream = async (publisher, eleId) => {
-  let viewer = await makeViewer(publisher);
+const assignStreamToVideoEle = async (nodeInput, eleId) => {
+  let nodeOutput = await getNodeOutput(nodeInput);
 
   let pc = new RTCPeerConnection(null);
 
   pc.onicecandidate = event => {
     console.log("[ICE]", event);
     if (event.candidate) {
-      viewer.janusServer.addIceCandidate(event.candidate, {
-        sessionId: viewer.sessionId,
-        handleId: viewer.handleId
+      nodeOutput.janusServer.addIceCandidate(event.candidate, {
+        sessionId: nodeOutput.sessionId,
+        handleId: nodeOutput.handleId
       });
     }
   };
@@ -142,27 +149,25 @@ const startViewStream = async (publisher, eleId) => {
   // let the "negotiationneeded" event trigger offer generation
   pc.ontrack = async event => {
     console.log("[ON TRACK_VIEWER]", event);
-    console.log(event);
     //event.streams.forEach(track => pc.addTrack(track, stream));
     document.getElementById(eleId).srcObject = event.streams[0];
   };
 
   try {
-    let publisherOfferSDP = await viewer.janusServer._join({
-      sessionId: viewer.sessionId,
-      handleId: viewer.handleId,
-      roomId: publisher.roomId,
-      broadcastId: publisher.broadcastId,
+    let nodeInputOfferSDP = await nodeOutput.janusServer._join({
+      sessionId: nodeOutput.sessionId,
+      handleId: nodeOutput.handleId,
+      roomId: nodeInput.roomId,
+      broadcastId: nodeInput.broadcastId,
       type: "subscriber"
     });
-    await pc.setRemoteDescription(publisherOfferSDP.jsep);
+    await pc.setRemoteDescription(nodeInputOfferSDP.jsep);
     let answerSDP = await pc.createAnswer();
-    console.log(answerSDP);
     await pc.setLocalDescription(answerSDP);
-    await viewer.janusServer._start({
-      sessionId: viewer.sessionId,
-      handleId: viewer.handleId,
-      roomId: publisher.roomId,
+    await nodeOutput.janusServer._start({
+      sessionId: nodeOutput.sessionId,
+      handleId: nodeOutput.handleId,
+      roomId: nodeInput.roomId,
       jsep: answerSDP
     });
   } catch (err) {
@@ -179,22 +184,23 @@ const initApp = async () => {
 
       let jw1 = new WebSocket("ws://127.0.0.1:8188", "janus-protocol");
       let janusServer1 = await makeJanusServer(jw1);
-      let publisher1 = await makePublisher(janusServer1);
+      let node1 = await getNodeInput(janusServer1);
 
       //
       let jw2 = new WebSocket("ws://127.0.0.1:8189", "janus-protocol");
       let janusServer2 = await makeJanusServer(jw2);
-      let publisher2 = await makePublisher(janusServer2);
+      let node2 = await getNodeInput(janusServer2);
 
-      let jw3 = new WebSocket("ws://13.209.96.83:8188", "janus-protocol");
+      //let jw3 = new WebSocket("ws://13.209.96.83:8188", "janus-protocol");
+      let jw3 = new WebSocket("ws://127.0.0.1:8188", "janus-protocol");
       let janusServer3 = await makeJanusServer(jw3);
-      let publisher3 = await makePublisher(janusServer3);
+      let node3 = await getNodeInput(janusServer3);
 
-      await startPublishStream(publisher1);
-      await relayPublisher(publisher1, publisher2);
-      await relayPublisher(publisher1, publisher3);
-      await startViewStream(publisher2, "viewer1");
-      await startViewStream(publisher3, "viewer2");
+      await inputStreamToMs(node1);
+      await relayNode(node1, node2);
+      await relayNode(node1, node3);
+      await assignStreamToVideoEle(node2, "viewer1");
+      await assignStreamToVideoEle(node3, "viewer2");
     })
     .catch(console.error);
 };
